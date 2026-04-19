@@ -1,93 +1,122 @@
 import streamlit as st
-from moviepy import VideoFileClip, TextClip, CompositeVideoClip
-from moviepy.video.fx import Crop
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
+from moviepy.video.fx.all import crop
 import whisper
 import os
+import uuid
 
 st.set_page_config(page_title="AttentionX AI", layout="centered")
 
-st.title("🎬 AttentionX AI - Video to Viral Clips")
+st.title("🎬 AttentionX AI")
+st.markdown("### Convert long videos into viral clips using AI 🚀")
 
 uploaded_file = st.file_uploader("📤 Upload Video", type=["mp4"])
 
 if uploaded_file is not None:
+    try:
+        with st.spinner("⏳ Processing your video..."):
 
-    st.video(uploaded_file)
+            st.video(uploaded_file)
 
-    # Save video
-    with open("input.mp4", "wb") as f:
-        f.write(uploaded_file.read())
+            # 🔑 Unique filenames (no overwrite)
+            uid = str(uuid.uuid4())
+            video_path = f"input_{uid}.mp4"
+            audio_path = f"audio_{uid}.wav"
 
-    # 🔊 AUDIO EXTRACTION
-    st.write("🔊 Extracting audio...")
-    video = VideoFileClip("input.mp4")
-    video.audio.write_audiofile("audio.wav")
+            # Save video
+            with open(video_path, "wb") as f:
+                f.write(uploaded_file.read())
 
-    st.success("✅ Audio Extracted!")
+            # 🔊 AUDIO EXTRACTION
+            st.write("🔊 Extracting audio...")
+            video = VideoFileClip(video_path)
+            video.audio.write_audiofile(audio_path)
 
-    # 🤖 SPEECH TO TEXT
-    st.write("🤖 Converting speech to text...")
-    model = whisper.load_model("tiny")   # fast model
-    result = model.transcribe("audio.wav", fp16=False)
+            st.success("✅ Audio Extracted!")
 
-    st.success("✅ Transcription Done!")
+            # 🤖 SPEECH TO TEXT
+            st.write("🤖 Converting speech to text...")
+            model = whisper.load_model("tiny")
+            result = model.transcribe(audio_path, fp16=False)
 
-    st.write("📝 Transcript:")
-    st.write(result["text"])
+            st.success("✅ Transcription Done!")
 
-    # 🔍 IMPORTANT MOMENTS DETECTION
-    st.write("🔍 Finding important moments...")
+            st.subheader("📝 Transcript")
+            st.write(result["text"])
 
-    keywords = ["important", "success", "mistake", "never", "learn"]
-    important_segments = []
+            # 🔍 IMPORTANT MOMENTS DETECTION
+            st.write("🔍 Finding important moments...")
 
-    for segment in result["segments"]:
-        text = segment["text"].lower()
-        if any(word in text for word in keywords):
-            important_segments.append(segment)
+            keywords = ["important", "success", "mistake", "never", "learn"]
+            important_segments = []
 
-    # fallback
-    if len(important_segments) == 0:
-        important_segments = result["segments"][:3]
+            for segment in result["segments"]:
+                text = segment["text"].lower()
+                if any(word in text for word in keywords):
+                    important_segments.append(segment)
 
-    st.success("✅ Important moments detected!")
+            # fallback
+            if len(important_segments) == 0:
+                important_segments = result["segments"][:3]
 
-    st.write("🎬 Generating viral clips...")
+            st.success("✅ Important moments detected!")
 
-    os.makedirs("outputs", exist_ok=True)
+            st.write("🎬 Generating viral clips...")
 
-    # ✂️ CREATE MULTIPLE CLIPS
-    for i, segment in enumerate(important_segments[:3]):
+            os.makedirs("outputs", exist_ok=True)
 
-        start = segment["start"]
-        end = segment["end"]
+            # ✂️ CREATE MULTIPLE CLIPS
+            for i, segment in enumerate(important_segments[:3]):
 
-        clip = video[start:end]
+                start = segment["start"]
+                end = segment["end"]
 
-        # 📱 Convert to vertical (Reels format)
-        clip = Crop(width=int(clip.h * 9 / 16), x_center=clip.w / 2).apply(clip)
+                clip = video.subclip(start, end)
 
-        # 🎯 Add captions
-        txt = TextClip(
-            text=segment["text"],
-            font_size=40,
-            color='yellow',
-            bg_color='black'
-        )
+                # 📱 Convert to vertical (Reels format)
+                clip = crop(
+                    clip,
+                    width=int(clip.h * 9 / 16),
+                    height=clip.h,
+                    x_center=clip.w / 2,
+                    y_center=clip.h / 2
+                )
 
-        txt = txt.with_position('bottom').with_duration(clip.duration)
+                # 🎯 Add captions (safe fallback if ImageMagick not installed)
+                try:
+                    txt = TextClip(
+                        segment["text"],
+                        fontsize=40,
+                        color='yellow',
+                        bg_color='black',
+                        method='caption',
+                        size=(clip.w, None)
+                    )
 
-        final = CompositeVideoClip([clip, txt])
+                    txt = txt.set_position(("center", "bottom")).set_duration(clip.duration)
+                    final = CompositeVideoClip([clip, txt])
 
-        filename = f"outputs/final_{i}.mp4"
-        final.write_videofile(filename)
+                except Exception:
+                    final = clip  # fallback if captions fail
 
-        st.success(f"🔥 Clip {i+1} Generated!")
-        st.video(filename)
+                filename = f"outputs/final_{uid}_{i}.mp4"
+                final.write_videofile(filename, codec="libx264", audio_codec="aac")
 
-    st.success("🎉 All clips generated successfully!")
+                st.success(f"🔥 Clip {i+1} Generated!")
+                st.video(filename)
 
+                # 📥 Download button
+                with open(filename, "rb") as file:
+                    st.download_button(
+                        label=f"📥 Download Clip {i+1}",
+                        data=file,
+                        file_name=f"clip_{i+1}.mp4",
+                        mime="video/mp4"
+                    )
 
+            video.close()
 
+            st.success("🎉 All clips generated successfully!")
 
-
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
